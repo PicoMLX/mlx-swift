@@ -7,10 +7,11 @@ import XCTest
 @testable import MLXNN
 
 // Ports of the layer tests from the Python distributed tests
-// (`python/tests/mlx_distributed_tests.py`).  Python runs them for every group
-// size under a launcher; each body here runs twice, once in a single process
-// where the sharding degenerates but the layers are still built and run, and
-// once across real ranks where every rank holds a different slice.
+// (`python/tests/mlx_distributed_tests.py`, and `test_fully_shard_grads` from
+// `nccl_test_distributed.py`).  Python runs them for every group size under a
+// launcher; the bodies here run in a single process, where the sharding
+// degenerates but the layers are still built and run, and across real ranks,
+// where every rank holds a different slice.
 
 /// Port of `test_shard_linear`.
 ///

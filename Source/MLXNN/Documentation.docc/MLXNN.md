@@ -193,3 +193,25 @@ These can be used with ``Sequential``.
 - ``valueAndGrad(model:_:)-12a2c``
 - ``valueAndGrad(model:_:)-548r7``
 - ``valueAndGrad(model:_:)-45dg5``
+
+### Distributed
+
+Layers and functions that shard a model across the processes of a group.
+
+- ``shardLinear(_:sharding:segments:group:)``
+- ``shardInPlace(_:sharding:segments:group:)``
+- ``shardInPlace(_:predicate:group:)``
+- ``fullyShard(_:group:computeDType:)-1osqe``
+- ``fullyShard(_:group:computeDType:)-9fbz``
+- ``AllToShardedLinear``
+- ``ShardedToAllLinear``
+- ``QuantizedAllToShardedLinear``
+- ``QuantizedShardedToAllLinear``
+- ``FullyShardedModule``
+- ``ShardingType``
+- ``Segments``
+- ``ShardingPredicate``
+- ``ShardingError``
+- ``sumGradients(group:)``
+- ``averageGradients(_:group:allReduceSize:stream:)``
+- ``clipGradNormSharded(gradients:maxNorm:group:stream:)``
