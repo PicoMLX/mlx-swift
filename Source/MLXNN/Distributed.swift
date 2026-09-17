@@ -64,6 +64,9 @@ public enum ShardingError: Error, CustomStringConvertible, Equatable {
     /// The layer being sharded is missing a parameter.
     case missingParameter(String)
 
+    /// A ``FullyShardedModule`` cannot shard a scalar parameter.
+    case scalarParameter(String)
+
     public var description: String {
         switch self {
         case .indivisible(let dimension, let value, let size):
@@ -83,6 +86,8 @@ public enum ShardingError: Error, CustomStringConvertible, Equatable {
             """
         case .missingParameter(let name):
             "The layer being sharded has no \(name)."
+        case .scalarParameter(let path):
+            "Cannot shard the parameter \(path) because it is a scalar."
         }
     }
 }
@@ -639,6 +644,215 @@ open class QuantizedShardedToAllLinear: QuantizedLinear {
     }
 }
 
+/// Returns a function that gathers the shards of parameters in the forward pass
+/// and reduce-scatters their gradients in the backward pass.
+///
+/// The shards travel in one buffer each way.
+///
+/// - Parameters:
+///   - group: the group the parameters are sharded across
+///   - fullShapes: the shape of each whole parameter
+///   - shardSizes: the number of elements in a shard of each parameter
+///   - computeDType: the type to cast the gathered parameters to, or `nil` to
+///     leave them alone
+private func makeGather(
+    group: MLXDistributed.Group, fullShapes: [[Int]], shardSizes: [Int], computeDType: DType?
+) -> ([MLXArray]) -> [MLXArray] {
+    let size = group.size
+    let splitIndices = shardSizes.dropLast().reduce(into: [Int]()) {
+        $0.append(($0.last ?? 0) + $1)
+    }
+    let shardShapes = fullShapes.map { [$0[0] / size] + $0.dropFirst() }
+
+    func maybeCast(_ x: MLXArray, _ dtype: DType?) -> MLXArray {
+        guard let dtype, x.dtype != dtype else {
+            return x
+        }
+        return x.asType(dtype)
+    }
+
+    func split(_ x: MLXArray) -> [MLXArray] {
+        splitIndices.isEmpty ? [x] : x.split(indices: splitIndices, axis: 1)
+    }
+
+    return CustomFunction {
+        Forward { shards in
+            let shard = concatenated(
+                shards.map { maybeCast($0.reshaped([1, -1]), computeDType) }, axis: 1)
+            let full = MLXDistributed.allGather(shard, group: group)
+            return zip(split(full), fullShapes).map { $0.reshaped($1) }
+        }
+        VJP { shards, cotangents in
+            let localFull = concatenated(cotangents.map { $0.reshaped([size, -1]) }, axis: 1)
+            let localShard = MLXDistributed.sumScatter(localFull, group: group) / size
+            let parts = split(localShard)
+            return shards.indices.map { i in
+                maybeCast(parts[i].reshaped(shardShapes[i]), shards[i].dtype)
+            }
+        }
+    }
+}
+
+/// A ``FullyShardedModule`` whatever module it wraps.
+private protocol FullySharded {}
+
+/// ``Module/filterValidParameters``, except that a module that is fully sharded
+/// itself gathers its own parameters.
+private func filterShardable(module: Module, key: String, item: ModuleItem) -> Bool {
+    if case .value(.module(let child)) = item, child is FullySharded {
+        return false
+    }
+    return Module.filterValidParameters(module, key, item)
+}
+
+/// Wraps a module so that each member of the group holds only a shard of its
+/// parameters.
+///
+/// The whole parameters are gathered for the forward pass and the gradients
+/// are reduce-scattered in the backward pass, so during training each member
+/// of the group stores and updates only its own shard.
+///
+/// Every parameter is sharded along its first axis, so that axis must be
+/// divisible by the size of the group.  The parameters of the wrapped module
+/// are under `module`.
+///
+/// ```swift
+/// let group = try MLXDistributed.initialize()
+/// let model = try fullyShard(MLP(), group: group, computeDType: .bfloat16)
+///
+/// func loss(model: FullyShardedModule<MLP>, x: MLXArray, y: MLXArray) -> MLXArray {
+///     mseLoss(predictions: model(x), targets: y, reduction: .mean)
+/// }
+///
+/// // the gradients hold this process' shard of each parameter
+/// let (value, gradients) = valueAndGrad(model: model, loss)(model, x, y)
+/// optimizer.update(model: model, gradients: gradients)
+/// ```
+///
+/// A wrapped ``UnaryLayer`` is called like one.  Any other module is called in
+/// a closure, `block { $0(x, mask: mask, cache: cache) }`.
+///
+/// A module that holds fully sharded modules leaves their parameters to them,
+/// so a model can gather one layer at a time: wrap the layers, then the model.
+///
+/// The backward pass needs `MLXDistributed.sumScatter`, which the ring backend
+/// doesn't implement.
+open class FullyShardedModule<Wrapped: Module>: Module, FullySharded {
+
+    /// The wrapped module, which holds this process' shard of the parameters
+    /// outside of a call.
+    public let module: Wrapped
+
+    /// The paths of the sharded parameters in ``module``.
+    private let paths: [String]
+
+    private let gather: ([MLXArray]) -> [MLXArray]
+
+    /// Shard the parameters of `module` across the group.
+    ///
+    /// - Parameters:
+    ///   - module: the module whose parameters are sharded in place
+    ///   - group: the group to shard across, or `nil` to use the global group
+    ///   - computeDType: the type the gathered parameters are cast to for the
+    ///     forward pass, or `nil` to leave them alone
+    public init(
+        _ module: Wrapped, group: MLXDistributed.Group? = nil, computeDType: DType? = nil
+    ) throws {
+        let group = try group ?? MLXDistributed.initialize()
+        let size = group.size
+
+        let parameters = module.filterMap(
+            filter: filterShardable, map: Module.mapParameters())
+        let flat = parameters.flattened()
+        for (path, array) in flat {
+            guard array.ndim > 0 else {
+                throw ShardingError.scalarParameter(path)
+            }
+            guard array.dim(0) % size == 0 else {
+                throw ShardingError.indivisible(
+                    dimension: "first axis of \(path)", of: array.dim(0), across: size)
+            }
+        }
+
+        self.paths = flat.map { $0.0 }
+        let fullShapes = flat.map { $0.1.shape }
+        let shardSizes = flat.map { $0.1.size / size }
+
+        module.update(parameters: try shard(parameters, group: group) { _, _ in (0, .count(1)) })
+
+        self.module = module
+        self.gather = makeGather(
+            group: group, fullShapes: fullShapes, shardSizes: shardSizes,
+            computeDType: computeDType)
+    }
+
+    open override func describeExtra(_ indent: Int) -> String {
+        "(shardedParameters=\(paths.count))"
+    }
+
+    /// Call `body` with the wrapped module while it holds the whole parameters.
+    ///
+    /// This calls a module that isn't a ``UnaryLayer``, for example
+    /// `block { $0(x, mask: mask, cache: cache) }`.  The shards are put back
+    /// when `body` returns or throws.
+    public func callAsFunction<Result>(_ body: (Wrapped) throws -> Result) rethrows -> Result {
+        guard !paths.isEmpty else {
+            return try body(module)
+        }
+
+        // update(parameters:) replaces the contents of the module's arrays, so
+        // the shards are held in arrays of their own to be put back
+        let shards = module.filterMap(
+            filter: filterShardable, map: Module.mapParameters { $0.reshaped($0.shape) })
+        let fulls = gather(shards.flattened().map { $0.1 })
+        module.update(parameters: ModuleParameters.unflattened(Array(zip(paths, fulls))))
+        defer {
+            module.update(parameters: shards)
+        }
+
+        return try body(module)
+    }
+}
+
+extension FullyShardedModule: UnaryLayer where Wrapped: UnaryLayer {
+    public func callAsFunction(_ x: MLXArray) -> MLXArray {
+        callAsFunction { $0(x) }
+    }
+}
+
+extension FullyShardedModule where Wrapped: Embedding {
+    /// Call ``Embedding/asLinear(_:)`` with the whole parameters, for a model
+    /// whose output projection shares the embedding's weight.
+    public func asLinear(_ x: MLXArray) -> MLXArray {
+        callAsFunction { $0.asLinear(x) }
+    }
+}
+
+/// Wrap `module` in a ``FullyShardedModule``.
+///
+/// In a group of one Python's `fully_shard` returns the module unchanged.  This
+/// wraps it all the same, so that the parameter paths, and the type the forward
+/// pass computes in, don't depend on the size of the group.
+///
+/// - Parameters:
+///   - module: the module whose parameters are sharded in place
+///   - group: the group to shard across, or `nil` to use the global group
+///   - computeDType: the type the gathered parameters are cast to for the
+///     forward pass, or `nil` to leave them alone
+public func fullyShard<Wrapped: Module>(
+    _ module: Wrapped, group: MLXDistributed.Group? = nil, computeDType: DType? = nil
+) throws -> FullyShardedModule<Wrapped> {
+    try FullyShardedModule(module, group: group, computeDType: computeDType)
+}
+
+/// A module that is fully sharded already is returned unchanged.
+public func fullyShard<Wrapped: Module>(
+    _ module: FullyShardedModule<Wrapped>, group: MLXDistributed.Group? = nil,
+    computeDType: DType? = nil
+) -> FullyShardedModule<Wrapped> {
+    module
+}
+
 /// Average the gradients across the processes in the group.
 ///
 /// Small gradients are concatenated into batches of at least `allReduceSize`
@@ -731,7 +945,8 @@ func groupBySize(_ sizes: [Int], limit: Int) -> [[Int]] {
 ///
 /// This is the sharded counterpart of `clipGradNorm` in MLXOptimizers: no
 /// process holds the whole gradient, so the local squared norms are summed
-/// across the group before anything is rescaled.
+/// across the group before anything is rescaled.  It clips the gradients of a
+/// ``FullyShardedModule``, for example.
 ///
 /// - Parameters:
 ///   - gradients: this process' shard of the gradients

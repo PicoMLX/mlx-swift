@@ -521,6 +521,222 @@ func clipGradNormShardedBody(world: MLXDistributed.Group) throws {
     }
 }
 
+/// Port of `test_fully_shard_grads` from `nccl_test_distributed.py`.
+///
+/// The backward pass reduce-scatters the gradients, which the ring backend
+/// can't, so this runs in a single process and under JACCL.
+func fullyShardGradsBody(world: MLXDistributed.Group) throws {
+    let dtypes: [(DType, Double, Double)] = [
+        (.float32, 1e-6, 1e-6),
+        (.bfloat16, 1e-3, 1e-3),
+    ]
+
+    let size = world.size
+    let rank = world.rank
+    let dims = 8 * size
+    let part = rank * dims / size ..< (rank + 1) * dims / size
+
+    class MLP: Module, UnaryLayer {
+        let l1: Linear
+        let l2: Linear
+
+        init(_ dims: Int) {
+            self.l1 = Linear(dims, dims)
+            self.l2 = Linear(dims, dims)
+        }
+
+        func callAsFunction(_ x: MLXArray) -> MLXArray {
+            l2(relu(l1(x)))
+        }
+    }
+
+    func lossFunction<Model: UnaryLayer>(model: Model, x: MLXArray, y: MLXArray) -> MLXArray {
+        let logits = model(x).asType(.float32)
+        return ((logits - y) ** 2).mean()
+    }
+
+    for (dtype, atol, rtol) in dtypes {
+        MLXRandom.seed(0xF0F0_F0F0)
+
+        let (kx, ky) = MLXRandom.split(key: MLXRandom.key(UInt64(rank)))
+        let x = MLXRandom.normal([4, dims], dtype: dtype, key: kx)
+        let y = MLXRandom.normal([4, dims], key: ky)
+
+        // DDP reference: replicated params, gradients averaged across ranks
+        let model = MLP(dims)
+        // Python rebinds the model's parameters when it casts them, but
+        // update(parameters:) replaces the contents of the arrays that
+        // trainableParameters() returns, so params holds arrays of its own
+        let params = model.trainableParameters().mapValues { $0.reshaped($0.shape) }
+
+        // Cast parameters to dtype for forward
+        model.update(parameters: params.mapValues { $0.asType(dtype) })
+        var (loss, grads) = valueAndGrad(model: model, lossFunction)(model, x, y)
+        grads = try averageGradients(grads, group: world)
+        loss = MLXDistributed.allSum(loss, group: world) / size
+        try checkedEval(loss, grads)
+
+        // Shard the model
+        let modelSharded = MLP(dims)
+        modelSharded.update(parameters: params)
+        let sharded = try fullyShard(modelSharded, group: world, computeDType: dtype)
+        var (lossSharded, gradsSharded) = valueAndGrad(model: sharded, lossFunction)(
+            sharded, x, y)
+
+        lossSharded = MLXDistributed.allSum(lossSharded, group: world) / size
+        try checkedEval(lossSharded, gradsSharded)
+        let gradsRef = Dictionary(uniqueKeysWithValues: grads.flattened())
+        XCTAssertTrue(
+            loss.allClose(lossSharded, rtol: 1e-4, atol: 1e-4).item(Bool.self), "\(dtype)")
+        let shardGradients = try XCTUnwrap(gradsSharded["module"]).flattened()
+        XCTAssertEqual(shardGradients.count, 4, "\(dtype)")
+        for (key, gs) in shardGradients {
+            let reference = try XCTUnwrap(gradsRef[key], key)
+            // not in the Python test: the gradient has the type of the shard
+            XCTAssertEqual(gs.dtype, .float32, "\(key) \(dtype)")
+            XCTAssertTrue(
+                gs.allClose(reference[part], rtol: rtol, atol: atol).item(Bool.self),
+                "\(key) \(dtype)")
+        }
+    }
+}
+
+/// Checks of ``FullyShardedModule`` the Python tests don't have.
+///
+/// They need only `allGather`, so unlike ``fullyShardGradsBody(world:)`` they
+/// run on the ring backend too.
+func fullyShardBody(world: MLXDistributed.Group) throws {
+    MLXRandom.seed(0xF0F0_F0F0)
+
+    let size = world.size
+    let dims = 8 * size
+
+    /// This rank's part of `array` along its first axis.
+    func part(_ array: MLXArray) -> MLXArray {
+        let chunk = array.dim(0) / size
+        return array[world.rank * chunk ..< (world.rank + 1) * chunk]
+    }
+
+    let x = MLXRandom.normal([4, dims])
+
+    // MARK: - every parameter is sharded along its first axis
+
+    let block = ProjectionBlock(dims, 2 * dims)
+    let expected = block(x)
+    // slices keep the values that fullyShard replaces with shards
+    let expectedShards = block.parameters().flattened().map { ($0.0, part($0.1)) }
+    try checkedEval(expected, expectedShards.map { $0.1 })
+
+    let sharded = try fullyShard(block, group: world)
+    XCTAssertTrue(sharded.module === block)
+    XCTAssertEqual(sharded.describeExtra(0), "(shardedParameters=4)")
+
+    func assertShards(_ when: String) throws {
+        let shards = Dictionary(uniqueKeysWithValues: sharded.parameters().flattened())
+        XCTAssertEqual(shards.count, expectedShards.count, when)
+        for (path, expected) in expectedShards {
+            // the parameters of the wrapped module are under `module`, as in Python
+            let shard = try XCTUnwrap(shards["module.\(path)"], "\(path) \(when)")
+            XCTAssertEqual(shard.shape, expected.shape, "\(path) \(when)")
+            XCTAssertTrue(shard.arrayEqual(expected).item(Bool.self), "\(path) \(when)")
+        }
+    }
+    try assertShards("after sharding")
+
+    // MARK: - a call gathers the whole parameters and puts the shards back
+
+    let y = sharded(x)
+    try checkedEval(y)
+    XCTAssertTrue(y.allClose(expected, rtol: 1e-5, atol: 1e-6).item(Bool.self))
+    try assertShards("after a call")
+
+    sharded { module in
+        XCTAssertEqual(module.up.weight.shape, [2 * dims, dims])
+        XCTAssertEqual(module.down.bias?.shape, [dims])
+    }
+
+    struct Failure: Error {}
+    XCTAssertThrowsError(try sharded { _ in throw Failure() })
+    try assertShards("after a call that throws")
+
+    // MARK: - the type the forward pass computes in
+
+    let half = try fullyShard(
+        ProjectionBlock(dims, 2 * dims), group: world, computeDType: .float16)
+    half { module in
+        XCTAssertEqual(module.up.weight.dtype, .float16)
+    }
+    XCTAssertEqual(half.module.up.weight.dtype, .float32, "the shards keep their own type")
+
+    // MARK: - a fully sharded module gathers its own parameters
+
+    let first = Linear(dims, dims)
+    let second = Linear(dims, dims)
+    let expectedStack = second(first(x))
+    try checkedEval(expectedStack)
+
+    let stack = try fullyShard(
+        Sequential(layers: try fullyShard(first, group: world), second), group: world)
+    XCTAssertEqual(stack.describeExtra(0), "(shardedParameters=2)")
+    XCTAssertEqual(first.weight.shape, [dims / size, dims], "sharded once")
+    XCTAssertEqual(second.weight.shape, [dims / size, dims])
+
+    let stackOutput = stack(x)
+    try checkedEval(stackOutput)
+    XCTAssertTrue(stackOutput.allClose(expectedStack, rtol: 1e-5, atol: 1e-6).item(Bool.self))
+
+    // MARK: - an embedding projects with the whole weight too
+
+    let embedding = Embedding(embeddingCount: dims, dimensions: 16)
+    let tokens = MLXArray([0, dims / 2, dims - 1])
+    let h = MLXRandom.normal([2, 16])
+    let expectedEmbeddings = embedding(tokens)
+    let expectedLogits = embedding.asLinear(h)
+    try checkedEval(expectedEmbeddings, expectedLogits)
+
+    let shardedEmbedding = try fullyShard(embedding, group: world)
+    let embeddings = shardedEmbedding(tokens)
+    let logits = shardedEmbedding.asLinear(h)
+    try checkedEval(embeddings, logits)
+    XCTAssertTrue(embeddings.arrayEqual(expectedEmbeddings).item(Bool.self))
+    XCTAssertTrue(logits.allClose(expectedLogits, rtol: 1e-5, atol: 1e-6).item(Bool.self))
+
+    // MARK: - what fullyShard leaves alone
+
+    XCTAssertTrue(
+        fullyShard(sharded, group: world) === sharded,
+        "a fully sharded module is returned unchanged")
+
+    let nothing = try fullyShard(ReLU(), group: world)
+    XCTAssertEqual(nothing.describeExtra(0), "(shardedParameters=0)")
+    XCTAssertTrue(nothing(x).arrayEqual(relu(x)).item(Bool.self))
+
+    // MARK: - what fullyShard can't shard
+
+    XCTAssertThrowsError(try fullyShard(Scale(), group: world)) { error in
+        XCTAssertEqual(error as? ShardingError, .scalarParameter("scale"))
+    }
+
+    if size > 1 {
+        let uneven = Linear(dims, dims + 1)
+        XCTAssertThrowsError(try fullyShard(uneven, group: world)) { error in
+            XCTAssertEqual(
+                error as? ShardingError,
+                .indivisible(dimension: "first axis of bias", of: dims + 1, across: size))
+        }
+        XCTAssertEqual(uneven.weight.shape, [dims + 1, dims], "left whole")
+    }
+}
+
+/// A module with a scalar parameter, which has no first axis to shard.
+private class Scale: Module, UnaryLayer {
+    let scale = MLXArray(Float(2))
+
+    func callAsFunction(_ x: MLXArray) -> MLXArray {
+        x * scale
+    }
+}
+
 /// A block that declares its projections as `Linear`, the way models do.
 private class ProjectionBlock: Module, UnaryLayer {
 
@@ -627,6 +843,14 @@ class DistributedNNTests: XCTestCase {
     func testClipGradNormSharded() throws {
         try clipGradNormShardedBody(world: try MLXDistributed.initialize())
     }
+
+    func testFullyShardGrads() throws {
+        try fullyShardGradsBody(world: try MLXDistributed.initialize())
+    }
+
+    func testFullyShard() throws {
+        try fullyShardBody(world: try MLXDistributed.initialize())
+    }
 }
 
 /// The multi process half, where every rank holds a different slice.
@@ -659,6 +883,7 @@ class DistributedNNRingTests: XCTestCase {
             try shardingEdgeCasesBody(world: group)
             try averageGradientsBody(world: group)
             try clipGradNormShardedBody(world: group)
+            try fullyShardBody(world: group)
         }
     }
 }
