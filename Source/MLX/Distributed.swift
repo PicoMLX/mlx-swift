@@ -46,7 +46,14 @@ public enum MLXDistributed {
         /// Select the first available backend.
         case any
         case ring
+
+        /// Open MPI, which MLX loads when a program first uses the backend.
+        ///
+        /// Launch the processes with `mpirun`, or `mlx.launch --backend mpi`.
+        /// MLX looks for `libmpi.dylib`, or the library `MLX_MPI_LIBNAME`
+        /// names.
         case mpi
+
         case nccl
 
         /// RDMA over Thunderbolt 5 between Macs.
