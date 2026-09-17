@@ -92,6 +92,19 @@ class DistributedTests: XCTestCase {
         XCTAssertThrowsError(try group.split(color: 0))
     }
 
+    /// Port of `test_jaccl_all_gather_factory_validation`.
+    ///
+    /// Python's `init` takes an `all_gather_factory`, which JACCL uses to
+    /// exchange connection details, and rejects it for any other backend.
+    /// mlx-c doesn't expose the `mlx::core::distributed::init` overload that
+    /// takes the factory, so Swift has no such argument yet.  Once it does,
+    /// check that passing a factory to a backend other than JACCL throws.  The
+    /// other half of the Python test, a factory that isn't callable, is the
+    /// compiler's job in Swift.
+    func testJacclAllGatherFactoryValidation() throws {
+        throw XCTSkip("mlx-c doesn't expose the distributed init that takes an all-gather factory.")
+    }
+
     // MARK: - Collectives
 
     /// In a group of size one the collectives return their input unchanged.
@@ -103,6 +116,14 @@ class DistributedTests: XCTestCase {
         assertEqual(MLXDistributed.allMin(x), x)
         assertEqual(MLXDistributed.allGather(x), x)
         assertEqual(MLXDistributed.sumScatter(x), x)
+    }
+
+    /// The port of `test_sum_scatter` in a group of one.
+    ///
+    /// MLX returns the input unchanged at this size, so this only exercises the
+    /// test itself.  The real run is ``DistributedJacclTests``.
+    func testSumScatter() throws {
+        try sumScatterBody(world: try MLXDistributed.initialize())
     }
 
     // MARK: - Point to point
