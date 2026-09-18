@@ -209,6 +209,7 @@ let noCudaCmlxExcludes = [
             // the wrappers there so they must not also be built directly
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
+            "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",
@@ -291,7 +292,8 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // distributed backends: enable ring, disable MPI + NCCL + JACCL
+        // distributed backends: build ring, not MPI or NCCL.  On Apple platforms
+        // mlx-conditional builds JACCL or its stub; elsewhere the stub is built.
         "mlx/mlx/distributed/mpi/mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
@@ -308,6 +310,8 @@ let cmlx = Target.target(
         .headerSearchPath("mlx-c"),
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
+        // JACCL's library includes its own headers as <jaccl/...>
+        .headerSearchPath("mlx/mlx/distributed/jaccl/lib"),
         .define("MLX_VERSION", to: "\"0.32.0\""),
     ],
     linkerSettings: linkerSettings,
