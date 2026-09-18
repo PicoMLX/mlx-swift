@@ -41,11 +41,9 @@ class DistributedTests: XCTestCase {
 
     /// Backends that are not compiled in report `false` rather than trapping.
     ///
-    /// JACCL isn't checked: it's compiled in on macOS and reports whether
-    /// librdma loads, which depends on the Mac.
+    /// MPI and JACCL aren't checked: they're compiled in and report whether
+    /// Open MPI's libmpi or librdma loads, which depends on the machine.
     func testUnavailableBackendsReportFalse() {
-        XCTAssertFalse(MLXDistributed.isAvailable(.mpi))
-
         // nccl is CUDA-only and is never built on Apple platforms
         #if !os(Linux)
             XCTAssertFalse(MLXDistributed.isAvailable(.nccl))

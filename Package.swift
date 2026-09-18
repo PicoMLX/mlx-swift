@@ -292,9 +292,10 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // distributed backends: build ring, not MPI or NCCL.  On Apple platforms
-        // mlx-conditional builds JACCL or its stub; elsewhere the stub is built.
-        "mlx/mlx/distributed/mpi/mpi.cpp",
+        // distributed backends: build ring and MPI, not NCCL.  MPI loads
+        // libmpi when it runs, like MLX.  On Apple platforms mlx-conditional
+        // builds JACCL or its stub; elsewhere the stub is built.
+        "mlx/mlx/distributed/mpi/no_mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
         "mlx/mlx/distributed/jaccl/jaccl.cpp",
