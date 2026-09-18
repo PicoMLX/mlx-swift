@@ -9,8 +9,8 @@ import XCTest
 /// Python has no JACCL-specific test file: its common distributed tests run on
 /// whichever backend `mlx.launch` started.  Each test method here runs one of
 /// those ported tests, named after the Python test, plus the ring tests JACCL
-/// passes too and `sumScatter`, which JACCL implements and the ring backend
-/// doesn't.
+/// passes too and the NCCL tests of `sumScatter` and `fullyShard`, which JACCL
+/// implements and the ring backend doesn't.
 ///
 /// The ranks run on different Macs connected over Thunderbolt 5 with RDMA, so
 /// the tests can't start them the way ``DistributedHarness`` does.  Launch one
@@ -99,6 +99,14 @@ class DistributedJacclTests: XCTestCase {
         try withJaccl { try sumScatterBody(world: $0) }
     }
 
+    /// Skipped for the same reason as ``testSumScatter()``: the backward pass
+    /// reduce-scatters the gradients.  The same body runs in a group of one in
+    /// ``DistributedNNTests``.
+    func testFullyShardGrads() throws {
+        try XCTSkipIf(true, "MLX's ReduceScatter::eval_cpu asserts on its input.")
+        try withJaccl { try fullyShardGradsBody(world: $0) }
+    }
+
     // MARK: - Checks the Python tests don't have
 
     /// `test_quantized_sharded_linear_construction` is a single process test in
@@ -113,6 +121,10 @@ class DistributedJacclTests: XCTestCase {
 
     func testShardingEdgeCases() throws {
         try withJaccl(powerOfTwo: true) { try shardingEdgeCasesBody(world: $0) }
+    }
+
+    func testFullyShard() throws {
+        try withJaccl { try fullyShardBody(world: $0) }
     }
 
     /// Join the JACCL group and run `body` with it.
