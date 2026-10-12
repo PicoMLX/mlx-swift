@@ -205,7 +205,7 @@ func moduleSubstitutionBody(world: MLXDistributed.Group) throws {
     let x = MLXRandom.normal([4, 64])
 
     // the check has to be able to fail: a module that is not a Linear is refused
-    let control = ProjectionBlock(64, 256)
+    let control = ProjectionBlock(64, 512)
     let notLinear: [(String, Module)] = [("up", Identity()), ("down", control.down)]
     XCTAssertThrowsError(
         try control.update(modules: ModuleChildren.unflattened(notLinear), verify: .all)
@@ -213,9 +213,10 @@ func moduleSubstitutionBody(world: MLXDistributed.Group) throws {
         XCTAssertTrue(error is UpdateError, "unexpected error: \(error)")
     }
 
-    // a float model, and one quantized first like a loaded quantized model
+    // a float model, and one quantized first like a loaded quantized model.  A
+    // hidden size of 512 leaves whole quantization groups on up to eight ranks.
     for quantized in [false, true] {
-        let block = ProjectionBlock(64, 256)
+        let block = ProjectionBlock(64, 512)
         if quantized {
             quantize(model: block)
         }
@@ -374,12 +375,13 @@ func shardingEdgeCasesBody(world: MLXDistributed.Group) throws {
 
     // A quantized layer packs its inputs in the weight and groups them in the
     // scales, so a boundary between segments lands at a different position in
-    // each.  Scaled through a Double, 3840 of 5632 inputs came to
-    // 479.99999999999994 packed words and 59.99999999999999 groups, which
-    // truncate to the wrong positions.  The shard has to reproduce the layer.
+    // each.  Scaled through a Double, 7680 of 11264 inputs came to
+    // 959.9999999999999 packed words and 119.99999999999999 groups, which
+    // truncate to the wrong positions.  Both segments hold whole quantization
+    // groups on up to eight ranks.  The shard has to reproduce the layer.
     MLXRandom.seed(0xF0F0_F0F0)
-    let inputs = 5632
-    let boundary = 3840
+    let inputs = 11264
+    let boundary = 7680
     let wide = QuantizedLinear(Linear(inputs, 8))
     let segmented = try QuantizedShardedToAllLinear(
         wide, segments: .indices([boundary]), group: world)

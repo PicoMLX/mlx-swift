@@ -48,6 +48,13 @@ public enum MLXDistributed {
         case ring
         case mpi
         case nccl
+
+        /// RDMA over Thunderbolt 5 between Macs.
+        ///
+        /// Built on macOS with the macOS 26.2 SDK or later, and available on
+        /// macOS 26.2 or later.  `mlx.launch --backend jaccl` provides its
+        /// configuration: `MLX_RANK`, `MLX_JACCL_COORDINATOR` and
+        /// `MLX_IBV_DEVICES`.
         case jaccl
     }
 
@@ -141,6 +148,11 @@ public enum MLXDistributed {
         var result = mlx_distributed_group_new()
         do {
             try withError {
+                // mlx-c doesn't expose the init overload that takes an
+                // all-gather factory, which JACCL can use to exchange its
+                // connection details over a custom channel (Python's
+                // all_gather_factory).  Until it does, JACCL uses its
+                // coordinator from MLX_JACCL_COORDINATOR.
                 _ = mlx_distributed_init(&result, strict, backend.rawValue)
             }
         } catch {
@@ -233,6 +245,11 @@ public enum MLXDistributed {
     public static func sumScatter(
         _ x: MLXArray, group: Group? = nil, stream: StreamOrDevice = .cpu
     ) -> MLXArray {
+        // MLX's ReduceScatter::eval_cpu asserts inputs.size() == 0, although the
+        // primitive always has one input, and this package doesn't define
+        // NDEBUG.  Evaluating this on the CPU stream in a group of more than one
+        // therefore aborts, and JACCL, the one backend on Apple platforms that
+        // implements it, communicates on the CPU.
         var result = mlx_array_new()
         mlx_distributed_sum_scatter(&result, x.ctx, group.groupCtx, stream.ctx)
         return MLXArray(result)
