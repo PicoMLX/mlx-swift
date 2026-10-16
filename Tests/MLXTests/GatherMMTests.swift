@@ -2,7 +2,6 @@
 
 import Foundation
 import MLX
-import MLXRandom
 import XCTest
 
 class GatherMMTests: XCTestCase {

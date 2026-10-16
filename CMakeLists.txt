@@ -87,6 +87,7 @@ if(MLX_BUILD_CUDA)
            CUDA::nvrtc # Promoted from PRIVATE, required by mlx
            CUDA::cuda_driver # Promoted from PRIVATE, required by mlx
            CUDNN::cudnn_all # Promoted from PRIVATE, required by mlx
+           CUDA::cusolver # Promoted from PRIVATE, required by mlx
   )
 endif()
 
