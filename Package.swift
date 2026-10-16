@@ -159,6 +159,8 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
+            // cholesky.cu and cusolver_utils.cpp (MLX v0.32.3)
+            .linkedLibrary("cusolver"),
             .linkedLibrary("nvrtc"),
             .linkedLibrary("cudart"),
             .linkedLibrary("cuda"),
