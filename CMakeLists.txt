@@ -46,10 +46,12 @@ set(MLX_BUILD_EXAMPLES OFF)
 set(MLX_BUILD_BENCHMARKS OFF)
 set(MLX_BUILD_PYTHON_BINDINGS OFF)
 
+# mlx: v0.32.3 plus the stream fix for integer floor_divide, the same commit as
+# the Source/Cmlx/mlx submodule
 FetchContent_Declare(
   mlx
-  GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
-  GIT_TAG "v0.32.3")
+  GIT_REPOSITORY "https://github.com/PicoMLX/mlx.git"
+  GIT_TAG "712dbd34939e902f7dbb844bf3ddaf3cf4c77f20")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c: 0.7.0 plus ml-explore/mlx-c#137 (gather_qmm for MLX v0.32.3), the same

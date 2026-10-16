@@ -277,6 +277,28 @@ class StreamTests: XCTestCase {
         XCTAssertEqual(StreamOrDevice.device(Device.cpu).stream, MLX.Stream.cpu)
     }
 
+    func testIntegerFloorDivideEvaluatesOnAnotherThread() {
+        // MLX v0.32.3's integer floor_divide built one of its ops on the
+        // calling thread's own stream, so evaluating the result on another
+        // thread stopped the process: "There is no Stream(gpu, N) in current
+        // thread".
+        final class Box: @unchecked Sendable {
+            var quotient: MLXArray?
+            var values: [Int32] = []
+        }
+        let box = Box()
+        box.quotient = MLXArray([7, -7, 6, -6] as [Int32]).floorDivide(2)
+
+        let done = DispatchSemaphore(value: 0)
+        Thread {
+            box.values = box.quotient!.asArray(Int32.self)
+            done.signal()
+        }.start()
+        done.wait()
+
+        XCTAssertEqual(box.values, [3, -4, 3, -3])
+    }
+
     // MARK: - Stream pool
 
     func testConcurrentStreamsAreDistinct() {
