@@ -46,12 +46,10 @@ set(MLX_BUILD_EXAMPLES OFF)
 set(MLX_BUILD_BENCHMARKS OFF)
 set(MLX_BUILD_PYTHON_BINDINGS OFF)
 
-# mlx: v0.32.3 plus stream fixes for floor_divide, gather_mm/gather_qmm indices,
-# layer_norm and SDPA, the same commit as the Source/Cmlx/mlx submodule
 FetchContent_Declare(
   mlx
-  GIT_REPOSITORY "https://github.com/PicoMLX/mlx.git"
-  GIT_TAG "f21a95934a3ff26dc1c1d21f132e3e23448ed116")
+  GIT_REPOSITORY "https://github.com/ml-explore/mlx.git"
+  GIT_TAG "v0.32.4")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c: 0.7.0 plus ml-explore/mlx-c#137 (gather_qmm for MLX v0.32.3), the same
