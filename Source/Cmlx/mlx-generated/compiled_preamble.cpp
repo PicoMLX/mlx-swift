@@ -115,6 +115,9 @@ struct complex64_t : public std::complex<float> {
   operator float() const {
     return real();
   };
+  explicit operator bool() const {
+    return real() != 0 || imag() != 0;
+  };
 };
 inline bool operator>=(const complex64_t& a, const complex64_t& b) {
   return (a.real() > b.real()) ||
@@ -303,6 +306,27 @@ Simd<T, 1> divide(Simd<T, 1> a_, Simd<T, 1> b_) {
     }
   }
   return a / b;
+}
+template <typename T>
+Simd<T, 1> floor_divide(Simd<T, 1> a_, Simd<T, 1> b_) {
+  T a = a_.value;
+  T b = b_.value;
+  if constexpr (std::is_integral_v<T>) {
+    if (b == 0) {
+      return T(0);
+    }
+    T q = a / b;
+    if constexpr (is_signed_v<T>) {
+      if (a % b != 0 && (a < 0 != b < 0)) {
+        q -= 1;
+      }
+    }
+    return q;
+  } else if constexpr (is_complex<T>) {
+    return a / b;
+  } else {
+    return floor(divide(a_, b_));
+  }
 }
 template <typename T>
 Simd<T, 1> remainder(Simd<T, 1> a_, Simd<T, 1> b_) {
@@ -686,6 +710,7 @@ using namespace mlx::core::simd;
 struct Add { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator+(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct ArcTan2 { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return atan2(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Divide { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return divide(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
+struct FloorDivide { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return floor_divide(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Multiply { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator*(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct Subtract { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator-(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
 struct LogicalAnd { template <int N, typename T> Simd<T, N> operator()(Simd<T, N> x, Simd<T, N> y) { return operator&&(x, y); } template <typename T> T operator()(T x, T y) { return (*this)(Simd<T, 1>(x), Simd<T, 1>(y)).value; } };
