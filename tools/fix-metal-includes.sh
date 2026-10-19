@@ -23,6 +23,8 @@ KERNEL_LIST=" \
 arg_reduce.metal \
 conv.metal \
 dot.metal \
+gated_delta_update.metal \
+gather_mm_offsets.metal \
 layer_norm.metal \
 random.metal \
 rms_norm.metal \

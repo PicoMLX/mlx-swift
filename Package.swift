@@ -41,6 +41,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/compiled.cpp",
     "mlx/mlx/backend/metal/conv.cpp",
     "mlx/mlx/backend/metal/copy.cpp",
+    "mlx/mlx/backend/metal/cross_entropy.cpp",
     "mlx/mlx/backend/metal/custom_kernel.cpp",
     "mlx/mlx/backend/metal/device.cpp",
     "mlx/mlx/backend/metal/device_info.cpp",
@@ -49,6 +50,7 @@ let noMetalCmlxExcludes = [
     "mlx/mlx/backend/metal/event.cpp",
     "mlx/mlx/backend/metal/fence.cpp",
     "mlx/mlx/backend/metal/fft.cpp",
+    "mlx/mlx/backend/metal/gated_delta_update.cpp",
     "mlx/mlx/backend/metal/hadamard.cpp",
     "mlx/mlx/backend/metal/indexing.cpp",
     "mlx/mlx/backend/metal/jit_kernels.cpp",
@@ -81,6 +83,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/conv.cpp",
     "mlx/mlx/backend/cuda/cublas_utils.cpp",
     "mlx/mlx/backend/cuda/cudnn_utils.cpp",
+    "mlx/mlx/backend/cuda/cusolver_utils.cpp",
     "mlx/mlx/backend/cuda/custom_kernel.cpp",
     "mlx/mlx/backend/cuda/delayload.cpp",
     "mlx/mlx/backend/cuda/device_info.cpp",
@@ -97,6 +100,7 @@ let noCudaCmlxExcludes = [
     "mlx/mlx/backend/cuda/scaled_dot_product_attention.cpp",
     "mlx/mlx/backend/cuda/slicing.cpp",
     "mlx/mlx/backend/cuda/utils.cpp",
+    "mlx/mlx/backend/cuda/wddm.cpp",
     "mlx/mlx/backend/cuda/worker.cpp",
     "mlx/mlx/backend/cuda/binary",
     "mlx/mlx/backend/cuda/conv",
@@ -134,6 +138,7 @@ let noCudaCmlxExcludes = [
                 "mlx-c/mlx/c/metal.cpp",
 
                 "mlx/mlx/backend/cuda/delayload.cpp",  // For Windows
+                "mlx/mlx/backend/cuda/wddm.cpp",  // For Windows
 
                 // built by the CudaBuild plugin (nvcc), not by SwiftPM
                 "mlx/mlx/backend/cuda/quantized/qmm",
@@ -155,6 +160,8 @@ let noCudaCmlxExcludes = [
             .linkedLibrary("cudnn"),
             .linkedLibrary("cublas"),
             .linkedLibrary("cublasLt"),
+            // cholesky.cu and cusolver_utils.cpp (MLX v0.32.3)
+            .linkedLibrary("cusolver"),
             .linkedLibrary("nvrtc"),
             .linkedLibrary("cudart"),
             .linkedLibrary("cuda"),
@@ -209,6 +216,7 @@ let noCudaCmlxExcludes = [
             // the wrappers there so they must not also be built directly
             "mlx/mlx/backend/cpu/compiled.cpp",
             "mlx/mlx/backend/cpu/jit_compiler.cpp",
+            "mlx/mlx/distributed/jaccl/no_jaccl.cpp",
 
             // opt-out of these backends (using metal)
             "mlx/mlx/backend/no_gpu",
@@ -222,6 +230,7 @@ let noCudaCmlxExcludes = [
 
     let cxxSettings: [CXXSetting] = [
         .headerSearchPath("metal-cpp"),
+        .headerSearchPath("mlx/mlx/distributed/jaccl/lib"),
 
         .define("MLX_USE_ACCELERATE"),
         .define("ACCELERATE_NEW_LAPACK"),
@@ -267,7 +276,6 @@ let cmlx = Target.target(
         // mlx files that are not part of the build
         "mlx/ACKNOWLEDGMENTS.md",
         "mlx/CMakeLists.txt",
-        "mlx/CODE_OF_CONDUCT.md",
         "mlx/CONTRIBUTING.md",
         "mlx/LICENSE",
         "mlx/MANIFEST.in",
@@ -292,7 +300,8 @@ let cmlx = Target.target(
         "mlx/mlx/backend/metal/kernels",
         "mlx/mlx/backend/metal/nojit_kernels.cpp",
 
-        // distributed backends: enable ring, disable MPI + NCCL + JACCL
+        // distributed backends: enable ring, disable MPI + NCCL.  JACCL is
+        // built through mlx-conditional on macOS, so its sources are excluded here.
         "mlx/mlx/distributed/mpi/mpi.cpp",
         "mlx/mlx/distributed/ring/no_ring.cpp",
         "mlx/mlx/distributed/nccl/nccl.cpp",
@@ -309,7 +318,8 @@ let cmlx = Target.target(
         .headerSearchPath("mlx-c"),
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
-        .define("MLX_VERSION", to: "\"0.32.0\""),
+        // MLX's CMake reads this from mlx/version.h; tools/update-mlx.sh keeps it in sync
+        .define("MLX_VERSION", to: "\"0.32.3\""),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,

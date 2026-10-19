@@ -277,6 +277,61 @@ class StreamTests: XCTestCase {
         XCTAssertEqual(StreamOrDevice.device(Device.cpu).stream, MLX.Stream.cpu)
     }
 
+    // An op that MLX builds on the calling thread's own stream, instead of the
+    // one it was given, cannot be evaluated on any other thread: the process
+    // stops with "There is no Stream(gpu, N) in current thread", or the
+    // evaluation never returns.
+
+    /// Evaluates `array` on a thread of its own, the way mlx-swift-lm's
+    /// generation thread evaluates arrays built on another thread, and
+    /// returns whether that evaluation finished.
+    private func evalOnAnotherThread(
+        _ array: MLXArray, file: StaticString = #filePath, line: UInt = #line
+    ) -> Bool {
+        final class Box: @unchecked Sendable {
+            let array: MLXArray
+            init(_ array: MLXArray) { self.array = array }
+        }
+        let box = Box(array)
+        let done = DispatchSemaphore(value: 0)
+        Thread {
+            eval(box.array)
+            done.signal()
+        }.start()
+        guard done.wait(timeout: .now() + 30) == .success else {
+            XCTFail("the evaluation never returned", file: file, line: line)
+            return false
+        }
+        return true
+    }
+
+    func testIntegerFloorDivideEvaluatesOnAnotherThread() {
+        // MLX v0.32.3's integer floor_divide (ml-explore/mlx#4515)
+        let quotient = MLXArray([7, -7, 6, -6] as [Int32]).floorDivide(2)
+        guard evalOnAnotherThread(quotient) else { return }
+        XCTAssertEqual(quotient.asArray(Int32.self), [3, -4, 3, -3])
+    }
+
+    func testGatherMMWithInt32IndicesEvaluatesOnAnotherThread() {
+        // gather_mm's cast of the indices to uint32 (ml-explore/mlx#4687)
+        let a = MLXArray.ones([2, 1, 4])
+        let b = MLXArray.ones([3, 4, 2])
+        let product = gatherMM(a, b, rhsIndices: MLXArray([0, 2] as [Int32]))
+        guard evalOnAnotherThread(product) else { return }
+        XCTAssertEqual(product.asArray(Float.self), [4, 4, 4, 4])
+    }
+
+    func testLayerNormOnTheCPUEvaluatesOnAnotherThread() {
+        // layer_norm's CPU fallback (ml-explore/mlx#4663)
+        let x = MLXArray([1, 2, 3, 4] as [Float]).reshaped([1, 4])
+        let normalized = MLXFast.layerNorm(x, weight: nil, bias: nil, eps: 0, stream: .cpu)
+        guard evalOnAnotherThread(normalized) else { return }
+        // mean 2.5, variance 1.25
+        let deviation = Float(1.25).squareRoot()
+        let expected = MLXArray([-1.5, -0.5, 0.5, 1.5] as [Float]).reshaped([1, 4]) / deviation
+        assertEqual(normalized, expected, atol: 1e-5)
+    }
+
     // MARK: - Stream pool
 
     func testConcurrentStreamsAreDistinct() {
