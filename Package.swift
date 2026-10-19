@@ -319,7 +319,7 @@ let cmlx = Target.target(
         .headerSearchPath("json/single_include/nlohmann"),
         .headerSearchPath("fmt/include"),
         // MLX's CMake reads this from mlx/version.h; tools/update-mlx.sh keeps it in sync
-        .define("MLX_VERSION", to: "\"0.32.3\""),
+        .define("MLX_VERSION", to: "\"0.32.4\""),
     ],
     linkerSettings: linkerSettings,
     plugins: cudaBuildPlugins,
