@@ -105,6 +105,38 @@ class DistributedTests: XCTestCase {
         XCTAssertThrowsError(try MLXDistributed.initialize(backend: .any))
     }
 
+    /// The ring backend refuses `MLX_RING_SOURCE_IPS` unless it gives one IP for
+    /// each connection to the next rank, before it connects. Set but empty is
+    /// refused too, rather than read as not set.
+    ///
+    /// This is rank 1, which connects first: without the check it would fail
+    /// later, for another reason, once its connection attempts to rank 0 ran out.
+    func testRingSourceIPsMustMatchTheConnections() throws {
+        let hostfile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ring-hostfile-\(UUID().uuidString).json")
+        try JSONSerialization.data(withJSONObject: [["127.0.0.1:1"], ["127.0.0.1:2"]])
+            .write(to: hostfile)
+        setenv("MLX_HOSTFILE", hostfile.path, 1)
+        setenv("MLX_RANK", "1", 1)
+        defer {
+            unsetenv("MLX_HOSTFILE")
+            unsetenv("MLX_RANK")
+            unsetenv("MLX_RING_SOURCE_IPS")
+            try? FileManager.default.removeItem(at: hostfile)
+        }
+
+        for sourceIPs in ["127.0.0.1,127.0.0.1", ""] {
+            setenv("MLX_RING_SOURCE_IPS", sourceIPs, 1)
+            XCTAssertThrowsError(try MLXDistributed.initialize(backend: .any), sourceIPs) { error in
+                guard case .caught(let message) = error as? MLXError else {
+                    return XCTFail("unexpected error for \"\(sourceIPs)\": \(error)")
+                }
+                XCTAssertTrue(
+                    message.contains("MLX_RING_SOURCE_IPS"), "\"\(sourceIPs)\": \(message)")
+            }
+        }
+    }
+
     func testSplitSingletonGroupThrows() throws {
         let group = try MLXDistributed.initialize()
         XCTAssertThrowsError(try group.split(color: 0))
