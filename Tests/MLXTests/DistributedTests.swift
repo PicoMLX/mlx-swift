@@ -120,6 +120,13 @@ class DistributedTests: XCTestCase {
         }
     }
 
+    /// Clearing with no real group formed is harmless: the next init falls back
+    /// to a group of size one again.  ``DistributedRingTests`` clears a real one.
+    func testClearBackendsWithoutAGroup() throws {
+        try MLXDistributed.clearBackends()
+        XCTAssertEqual(try MLXDistributed.initialize().size, 1)
+    }
+
     func testSplitSingletonGroupThrows() throws {
         let group = try MLXDistributed.initialize()
         XCTAssertThrowsError(try group.split(color: 0))
