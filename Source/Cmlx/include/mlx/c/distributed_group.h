@@ -42,6 +42,12 @@ int mlx_distributed_init(
     const char* bk /* may be null */);
 
 /**
+ * Clear the groups that init has cached, so that a later init forms new
+ * ones. A group still in use stays valid until it is freed.
+ */
+int mlx_distributed_clear_backends(void);
+
+/**
  * Get the rank.
  */
 int mlx_distributed_group_rank(mlx_distributed_group group);

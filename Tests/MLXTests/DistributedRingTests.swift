@@ -50,6 +50,7 @@ class DistributedRingTests: XCTestCase {
         try allGather(group)
         try sendRecv(group)
         try allGatherVJP(group)
+        try clearBackends(group)
     }
 
     /// Port of `test_groups`.
@@ -187,5 +188,30 @@ class DistributedRingTests: XCTestCase {
         try checkedEval(gradient)
 
         XCTAssertEqual(gradient.item(Float.self), group.rank == 0 ? 1.0 : 0.0)
+    }
+
+    /// ``MLXDistributed/clearBackends()`` drops the cached group.  Without a
+    /// hostfile, a strict init then throws instead of returning it, and with
+    /// the hostfile again the ranks form a new ring, which sums like the first.
+    ///
+    /// Runs last: the ranks form the new ring together, and the old group,
+    /// still held, keeps its own connections.
+    private func clearBackends(_ group: MLXDistributed.Group) throws {
+        let hostfile = try XCTUnwrap(getenv("MLX_HOSTFILE").map { String(cString: $0) })
+        unsetenv("MLX_HOSTFILE")
+        defer { setenv("MLX_HOSTFILE", hostfile, 1) }
+
+        XCTAssertEqual(try MLXDistributed.initialize(backend: .ring, strict: true).size, Self.rankCount)
+        try MLXDistributed.clearBackends()
+        XCTAssertThrowsError(try MLXDistributed.initialize(backend: .ring, strict: true))
+
+        setenv("MLX_HOSTFILE", hostfile, 1)
+        let again = try MLXDistributed.initialize(backend: .ring, strict: true)
+        XCTAssertEqual(again.size, Self.rankCount)
+        XCTAssertEqual(again.rank, group.rank)
+
+        let sum = MLXDistributed.allSum(MLXArray([Float(group.rank + 1)]), group: again)
+        try checkedEval(sum)
+        XCTAssertEqual(sum.item(Float.self), Float(Self.rankCount * (Self.rankCount + 1) / 2))
     }
 }

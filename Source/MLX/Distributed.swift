@@ -124,7 +124,7 @@ public enum MLXDistributed {
     /// backend is configured but cannot form its group, e.g. the ring backend
     /// with a malformed `MLX_HOSTFILE`.
     ///
-    /// MLX caches the group for each backend for the life of the process,
+    /// MLX caches the group for each backend until ``clearBackends()``,
     /// including the group of size one that a non-strict call falls back to,
     /// and a later strict call for that backend returns the cached group
     /// instead of throwing.  A non-strict ``Backend/any`` that finds no backend
@@ -148,6 +148,17 @@ public enum MLXDistributed {
             throw error
         }
         return Group(result)
+    }
+
+    /// Forget the groups ``initialize(backend:strict:)`` has cached, so that a
+    /// later call forms a new group from the configuration at that time.
+    ///
+    /// A ``Group`` still held stays usable.  Its backend closes its connections
+    /// once the last reference to it is gone.
+    public static func clearBackends() throws {
+        try withError {
+            _ = mlx_distributed_clear_backends()
+        }
     }
 
     // MARK: - Collectives

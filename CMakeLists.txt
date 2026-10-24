@@ -54,13 +54,14 @@ FetchContent_Declare(
   GIT_TAG "598b041ba7146e830a340a6317476815d42e7ab5")
 FetchContent_MakeAvailable(mlx)
 
-# mlx-c: 0.7.0 plus ml-explore/mlx-c#137 (gather_qmm for MLX v0.32.3), the same
-# commit as the Source/Cmlx/mlx-c submodule
+# mlx-c: 0.7.0 plus ml-explore/mlx-c#137 (gather_qmm for MLX v0.32.3) and
+# mlx_distributed_clear_backends (ml-explore/mlx-c#134), the same commit as the
+# Source/Cmlx/mlx-c submodule
 set(MLX_C_BUILD_EXAMPLES OFF)
 FetchContent_Declare(
   mlx-c
   GIT_REPOSITORY "https://github.com/PicoMLX/mlx-c.git"
-  GIT_TAG "d7fbf0aed89be67d9e81b46b9dee108588accb38")
+  GIT_TAG "5d8588a4e31f2d5e0d52ce5edc16ce2204355600")
 FetchContent_MakeAvailable(mlx-c)
 
 # swift-numerics
