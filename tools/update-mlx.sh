@@ -82,6 +82,12 @@ for x in Source/Cmlx/mlx-generated/*.cpp ; do \
 done;
 rm Source/Cmlx/mlx-generated/*.tmp
 
+# MLX's CMake reads its version from mlx/version.h; SwiftPM and the Xcode project are
+# given it here instead, so copy it over
+mlx_version=$(awk '/^#define MLX_VERSION_(MAJOR|MINOR|PATCH) / { v = v (v == "" ? "" : ".") $3 } END { print v }' \
+    "$mlx_source/mlx/version.h")
+sed -i '' -E "/MLX_VERSION/ s/[0-9]+\.[0-9]+\.[0-9]+/$mlx_version/" Package.swift xcode/xcconfig/Cmlx.xcconfig
+
 # Update the headers
 ./tools/fix-metal-includes.sh
 
