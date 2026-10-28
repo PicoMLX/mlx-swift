@@ -262,8 +262,18 @@ final class CompiledFunction: @unchecked (Sendable) {
         //
         // evalLock is already held by call(_:) and covers everything through
         // mlx_closure_apply below, which is where the trace runs.
+        //
+        // A trace replays on the streams it was recorded on.  The backend
+        // keys its cache on its own per-thread default stream, which never
+        // sees the task-local one (``Device/withDefaultDevice(_:_:)``,
+        // ``Stream/withNewDefaultStream(device:_:)``), so pass that stream as
+        // a cache constant: otherwise a call pinned to the CPU can replay a
+        // trace recorded on the GPU by the same thread, and vice versa.
         var compiled = mlx_closure_new()
-        let compileStatus = mlx_detail_compile(&compiled, innerClosure, id, shapeless, [], 0)
+        let streamIndex = UInt64(Stream.defaultStream.index)
+        let compileStatus = withUnsafePointer(to: streamIndex) {
+            mlx_detail_compile(&compiled, innerClosure, id, shapeless, $0, 1)
+        }
         defer {
             mlx_closure_free(compiled)
         }
