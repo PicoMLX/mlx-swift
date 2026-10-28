@@ -302,6 +302,44 @@ class TransformTests: XCTestCase {
         XCTAssertFalse(allClose(c2a, c2b).item())
     }
 
+    func testCompiledCallRunsOnTheTaskLocalDevice() {
+        // The compiler cache is per thread, so each probe runs on a new thread.
+        final class Box: @unchecked Sendable { var value: [Float] = [] }
+        func onNewThread(_ body: @escaping @Sendable () -> [Float]) -> [Float] {
+            let box = Box()
+            let done = DispatchSemaphore(value: 0)
+            Thread {
+                box.value = body()
+                done.signal()
+            }.start()
+            done.wait()
+            return box.value
+        }
+        @Sendable func run(_ device: Device) -> [Float] {
+            Device.withDefaultDevice(device) {
+                let x = MLXArray((0 ..< 256).map { Float($0 - 128) / 17.3 }, [4, 64])
+                return geluApproximate(x).asArray(Float.self)
+            }
+        }
+
+        let cpu = onNewThread { run(.cpu) }
+        let gpu = onNewThread { run(.gpu) }
+        // The backends round the approximation differently, which is what
+        // makes a replay on the wrong device visible.
+        XCTAssertNotEqual(cpu, gpu)
+
+        let cpuAfterGPU = onNewThread {
+            _ = run(.gpu)
+            return run(.cpu)
+        }
+        let gpuAfterCPU = onNewThread {
+            _ = run(.cpu)
+            return run(.gpu)
+        }
+        XCTAssertEqual(cpuAfterGPU, cpu)
+        XCTAssertEqual(gpuAfterCPU, gpu)
+    }
+
     func testCompilePerformance() {
         // this is the code from compilation.md
 
