@@ -47,11 +47,13 @@ set(MLX_BUILD_BENCHMARKS OFF)
 set(MLX_BUILD_PYTHON_BINDINGS OFF)
 
 # mlx: v0.32.4 plus MLX_RING_SOURCE_IPS, which binds the ring's outgoing
-# connections to given IPs, the same commit as the Source/Cmlx/mlx submodule
+# connections to given IPs, and the ring's fix for a data race on its pending
+# send/recv lists (ml-explore/mlx#4737), the same commit as the
+# Source/Cmlx/mlx submodule
 FetchContent_Declare(
   mlx
   GIT_REPOSITORY "https://github.com/PicoMLX/mlx.git"
-  GIT_TAG "598b041ba7146e830a340a6317476815d42e7ab5")
+  GIT_TAG "d830d190cead26556d8b2a9ca6c8f90428ad7a46")
 FetchContent_MakeAvailable(mlx)
 
 # mlx-c
